@@ -1,37 +1,61 @@
+"""
+main.py
+-------
+3-agent pipeline: Web Researcher -> Presentation Builder -> Video Renderer.
+
+Usage:
+    python main.py --topic "The rise of AI agents"
+    python main.py --topic "Quantum computing" --fps 1 --wait 2000
+"""
+
 import argparse
 import asyncio
 import os
+import random
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
 from agents import OpenAIChatCompletionsModel, Runner
-from agents.mcp import MCPServerStdio
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI
 
-from pipeline.content_planner import create_content_planner
-from pipeline.html_builder import create_html_builder
-from pipeline.video_renderer import create_video_renderer
-from pipeline.qa_metadata import create_qa_metadata_agent
+from pipeline.web_researcher import create_web_researcher
+from pipeline.presentation_builder import create_presentation_builder
+from pipeline.video_renderer_agent import create_video_renderer_agent
 
 load_dotenv(override=True)
 
 # ---------------------------------------------------------------------------
-# Model setup — Groq Cloud via OpenAI-compatible endpoint
+# Model setup
 # ---------------------------------------------------------------------------
-provider = AsyncOpenAI(
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
+provider = AsyncAzureOpenAI(
+    api_key=os.getenv("AZURE_GPT_OPENAI_GPT4o_API_KEY"),
+    azure_endpoint=os.getenv("AZURE_GPT4o_OPENAI_ENDPOINT"),
+    api_version="2025-01-01-preview",
 )
-gemini_model = OpenAIChatCompletionsModel(
-    model="arcee-ai/trinity-large-preview:free",
+model = OpenAIChatCompletionsModel(
+    model="gpt-4o",
     openai_client=provider,
 )
 
-# Playwright MCP — portrait viewport for 9:16 screenshots
-stdio_params = {
-    "command": "npx.cmd",
-    "args": ["@playwright/mcp", "--viewport-size", "1080,1920"],
-}
+TEMPLATES_DIR = Path("presentation_creator/style-references")
+
+
+def _make_topic_slug(topic: str) -> str:
+    slug = topic.lower().strip()
+    slug = re.sub(r"[^\w\s]", "", slug)
+    slug = re.sub(r"\s+", "_", slug)
+    return slug[:60]
+
+
+def _pick_random_template() -> str:
+    templates = [
+        f for f in TEMPLATES_DIR.glob("*.html")
+        if " " not in f.name  # exclude "cluely-style copy.html" etc.
+    ]
+    if not templates:
+        raise FileNotFoundError(f"No templates found in {TEMPLATES_DIR}")
+    return random.choice(templates).name
 
 
 # ---------------------------------------------------------------------------
@@ -39,21 +63,19 @@ stdio_params = {
 # ---------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="AI Reel Generator — 4-agent pipeline (OpenAI Agent SDK)"
-    )
-    parser.add_argument("--topic", required=True, help='Video topic, e.g. "Top 5 AI tools"')
-    parser.add_argument("--brand", required=True, help='Brand name, e.g. "TechBrand"')
-    parser.add_argument(
-        "--tone",
-        default="professional",
-        choices=["professional", "energetic", "casual"],
-        help="Presentation tone (default: professional)",
+        description="AI Presentation-to-Video Generator — 3-agent pipeline"
     )
     parser.add_argument(
-        "--length",
-        type=int,
-        default=30,
-        help="Target reel length in seconds (default: 30)",
+        "--topic", required=True,
+        help='Research topic, e.g. "The rise of AI agents"',
+    )
+    parser.add_argument(
+        "--fps", type=int, default=1,
+        help="Frames per second for the output video (default: 1)",
+    )
+    parser.add_argument(
+        "--wait", type=int, default=-1,
+        help="ms to wait per slide for animations. Default: -1 (auto by template)",
     )
     return parser.parse_args()
 
@@ -61,113 +83,95 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
-async def run_pipeline(topic: str, brand: str, tone: str, length: int) -> None:
-    Path("output/frames").mkdir(parents=True, exist_ok=True)
+async def run_pipeline(topic: str, fps: int, wait_override: int) -> None:
+    Path("output").mkdir(exist_ok=True)
 
-    print(f"\n{'='*60}")
-    print(f"  AI Reel Generator")
-    print(f"  Topic : {topic}")
-    print(f"  Brand : {brand}")
-    print(f"  Tone  : {tone}")
-    print(f"  Length: {length}s")
-    print(f"{'='*60}\n")
+    topic_slug = _make_topic_slug(topic)
+    template_name = _pick_random_template()
+    research_filename = f"{topic_slug}.txt"
+
+    print(f"\n{'='*62}")
+    print(f"  AI Presentation-to-Video Generator")
+    print(f"  Topic    : {topic}")
+    print(f"  Template : {template_name}")
+    print(f"  FPS      : {fps}")
+    print(f"  Wait     : {'auto' if wait_override < 0 else f'{wait_override}ms'}")
+    print(f"{'='*62}\n")
 
     # ------------------------------------------------------------------
-    # Agent 1 — Content Planner
+    # Agent 1 - Web Researcher
     # ------------------------------------------------------------------
-    print(">>> Agent 1 — Content Planner")
-    planner = create_content_planner(gemini_model)
+    print(">>> Agent 1 - Web Researcher")
+    researcher = create_web_researcher(model)
     result1 = await Runner.run(
-        planner,
+        researcher,
         (
-            f"Create a slide outline for a {length}-second short-form video reel.\n"
+            f"Research this topic and save the article:\n\n"
             f"Topic: {topic}\n"
-            f"Brand: {brand}\n"
-            f"Tone: {tone}\n"
-            f"Target length: {length} seconds\n\n"
-            "When done, save the markdown with save_slides_markdown."
+            f"topic_slug: \"{topic_slug}\"\n\n"
+            f"Run at least 4 web_search calls covering different angles, "
+            f"then write a comprehensive article and call save_research_text."
         ),
+        max_turns=20,
     )
     print(result1.final_output)
 
     # ------------------------------------------------------------------
-    # Agent 2 — HTML Builder
+    # Agent 2 - Presentation Builder
     # ------------------------------------------------------------------
-    print("\n>>> Agent 2 — HTML Builder")
-    builder = create_html_builder(gemini_model)
+    print("\n>>> Agent 2 - Presentation Builder")
+    builder = create_presentation_builder(model)
     result2 = await Runner.run(
         builder,
         (
-            f"Build a self-contained HTML presentation from the saved slides.\n"
-            f"Brand: {brand}  |  Tone: {tone}\n\n"
-            "Steps: read slides → list templates → pick best match → read template → "
-            "build HTML → save_presentation_html."
+            f"Build the presentation HTML:\n\n"
+            f"Research file : \"{research_filename}\"\n"
+            f"Template      : \"{template_name}\"\n\n"
+            f"Steps:\n"
+            f"1. Call read_research_text(\"{research_filename}\")\n"
+            f"2. Call read_template(\"{template_name}\")\n"
+            f"3. Replace ONLY the text content in the template with research content.\n"
+            f"   DO NOT change CSS, JS, class names, IDs, structure, or slide count.\n"
+            f"4. Call save_presentation_html(content=<filled HTML>)"
         ),
+        max_turns=10,
     )
     print(result2.final_output)
 
     # ------------------------------------------------------------------
-    # Agent 3 — Video Renderer  (needs Playwright MCP)
+    # Agent 3 - Video Renderer
     # ------------------------------------------------------------------
-    print("\n>>> Agent 3 — Video Renderer")
-    html_path = Path("output/presentation.html").resolve()
-    file_url = html_path.as_uri()
-
-    async with MCPServerStdio(
-        name="Playwright",
-        params=stdio_params,
-        client_session_timeout_seconds=120.0,
-    ) as playwright_server:
-        renderer = create_video_renderer(gemini_model, playwright_server)
-        result3 = await Runner.run(
-            renderer,
-            (
-                f"Render the presentation to a video reel.\n"
-                f"Presentation URL: {file_url}\n"
-                f"Save frames to: output/frames/\n"
-                f"Output MP4: output/reel.mp4\n"
-                f"Target length: {length}s → use fps=1 (each slide = 1 second)\n\n"
-                "Follow the workflow in your instructions exactly."
-            ),
-            max_turns=60,
-        )
-        print(result3.final_output)
-
-    # ------------------------------------------------------------------
-    # Agent 4 — QA + Metadata
-    # ------------------------------------------------------------------
-    print("\n>>> Agent 4 — QA + Metadata")
-    qa_agent = create_qa_metadata_agent(gemini_model)
-    result4 = await Runner.run(
-        qa_agent,
+    print("\n>>> Agent 3 - Video Renderer")
+    renderer = create_video_renderer_agent(model)
+    result3 = await Runner.run(
+        renderer,
         (
-            f"QA the reel and produce social media metadata.\n"
-            f"Topic: {topic}\n"
-            f"Brand: {brand}\n"
-            f"Tone: {tone}\n"
-            f"Target length: {length} seconds\n"
-            f"Video: output/reel.mp4"
+            f"Render the presentation to video.\n\n"
+            f"Call render_presentation with:\n"
+            f"  html_path     = \"output/presentation.html\"\n"
+            f"  fps           = {fps}\n"
+            f"  template_name = \"{template_name}\"\n"
+            f"  wait_override = {wait_override}"
         ),
+        max_turns=5,
     )
-    print(result4.final_output)
+    print(result3.final_output)
 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
-    print(f"\n{'='*60}")
-    print("  Pipeline complete — output files:")
+    print(f"\n{'='*62}")
+    print("  Pipeline complete:")
     for label, fpath in [
-        ("Slide outline ", "output/slides.md"),
-        ("Presentation  ", "output/presentation.html"),
-        ("Reel          ", "output/reel.mp4"),
-        ("Thumbnail     ", "output/thumbnail.jpg"),
-        ("Caption       ", "output/caption.txt"),
+        ("Research  ", f"presentation_creator/refrence_txt/{research_filename}"),
+        ("HTML      ", "output/presentation.html"),
+        ("Video     ", "output/reel.mp4"),
     ]:
-        mark = "✓" if Path(fpath).exists() else "✗"
-        print(f"  {mark}  {label}  {fpath}")
-    print(f"{'='*60}\n")
+        mark = "OK     " if Path(fpath).exists() else "MISSING"
+        print(f"  [{mark}]  {label}  {fpath}")
+    print(f"{'='*62}\n")
 
 
 if __name__ == "__main__":
     args = parse_args()
-    asyncio.run(run_pipeline(args.topic, args.brand, args.tone, args.length))
+    asyncio.run(run_pipeline(args.topic, args.fps, args.wait))

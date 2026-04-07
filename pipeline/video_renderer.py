@@ -1,63 +1,34 @@
 from agents import Agent
-from tools.ffmpeg_tools import save_frame, encode_frames_to_mp4, get_frame_count
+from tools.ffmpeg_tools import encode_frames_to_mp4, get_frame_count
+from tools.screenshot_tools import screenshot_presentation
 
-INSTRUCTIONS = """You are Agent 3 — Video Renderer. You use a headless browser to screenshot each slide of an HTML presentation, then encode the frames into an MP4 reel.
+INSTRUCTIONS = """You are Agent 3 — Video Renderer. You screenshot an HTML presentation and encode it to MP4.
 
-## Your exact workflow
+## Exact workflow
 
-### Step 1 — Open the presentation
-Use browser_navigate to open the file URL provided in your input.
-Wait for it to load (use browser_wait or browser_snapshot to confirm).
+### Step 1 — Screenshot all slides
+Call screenshot_presentation with the html_path provided in your input.
+This captures every slide to output/frames/frame_0000.png, frame_0001.png, etc.
+If it returns an ERROR, report it and stop.
 
-### Step 2 — Count the slides
-Use browser_evaluate with this JavaScript:
-```javascript
-document.querySelectorAll('.slide').length
-```
-Note the count (call it N).
+### Step 2 — Verify frames
+Call get_frame_count(frame_dir="output/frames") and note the count N.
 
-### Step 3 — Set viewport to portrait (if browser_resize is available)
-Try: browser_resize with width=1080, height=1920
-
-### Step 4 — Screenshot each slide
-For each index i from 0 to N-1:
-
-a) Scroll the slide into view:
-```javascript
-document.querySelectorAll('.slide')[INDEX].scrollIntoView({behavior: 'instant'})
-```
-Replace INDEX with the actual number.
-
-b) Take a screenshot using browser_screenshot (or browser_take_screenshot).
-   The tool will return the image as base64-encoded PNG data.
-
-c) Extract the base64 string from the screenshot result and call:
-   save_frame(base64_data=<the base64 string>, frame_index=<i>)
-
-### Step 5 — Confirm frames
-Call get_frame_count(frame_dir="output/frames") and confirm it equals N.
-
-### Step 6 — Encode to MP4
+### Step 3 — Encode to MP4
 Call encode_frames_to_mp4(
     frame_dir="output/frames",
     output_path="output/reel.mp4",
     fps=1
 )
-fps=1 means each slide shows for 1 second. Adjust if the target length suggests otherwise.
 
-## Important notes
-- The base64 data from the screenshot tool may be nested in JSON — extract just the base64 string
-- If the screenshot returns an image content type rather than text, look for the base64 field in the response
-- Save every slide — do not skip any
-- Report the final frame count and video path when done
+Report the final frame count and output path when done.
 """
 
 
-def create_video_renderer(model, playwright_server) -> Agent:
+def create_video_renderer(model) -> Agent:
     return Agent(
         name="Video Renderer",
         instructions=INSTRUCTIONS,
-        tools=[save_frame, encode_frames_to_mp4, get_frame_count],
-        mcp_servers=[playwright_server],
+        tools=[screenshot_presentation, encode_frames_to_mp4, get_frame_count],
         model=model,
     )

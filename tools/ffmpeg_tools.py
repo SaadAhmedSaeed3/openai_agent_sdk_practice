@@ -28,7 +28,7 @@ def get_frame_count(frame_dir: str) -> int:
 @function_tool
 def encode_frames_to_mp4(frame_dir: str, output_path: str, fps: int = 1) -> str:
     """
-    Encode PNG frames into a 9:16 portrait MP4 reel (1080x1920).
+    Encode PNG frames into a 16:9 landscape MP4 (1920x1080).
     fps=1 means each frame lasts 1 second; fps=2 means 0.5s per frame.
     """
     frame_pattern = str(Path(frame_dir) / "frame_%04d.png")
@@ -37,8 +37,8 @@ def encode_frames_to_mp4(frame_dir: str, output_path: str, fps: int = 1) -> str:
         "-framerate", str(fps),
         "-i", frame_pattern,
         "-vf", (
-            "scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black"
+            "scale=1920:1080:force_original_aspect_ratio=decrease,"
+            "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black"
         ),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",

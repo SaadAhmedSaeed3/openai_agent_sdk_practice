@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import playwright; print\\('playwright installed'\\)\")",
+      "Bash(uv add:*)",
+      "Bash(python -m playwright install chromium)",
+      "Bash(python render_video.py --html output/presentation.html)",
+      "Bash(python3 -c \"import render_video\")",
+      "Bash(python -c ':*)"
+    ]
+  }
+}
